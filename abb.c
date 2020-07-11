@@ -19,15 +19,15 @@ struct abb_iter{
     cola_t* cola_inorder;
 };
 
-nodo_t* crear_nodo(char* clave, void* dato);
-void eliminar_nodo(nodo_t* nodo, abb_t* arbol);
+nodo_t* crear_nodo(const char* clave, void* dato);
 nodo_t* _abb_guardar(nodo_t* nodo, const char* clave, void* dato, abb_t* arbol);
 nodo_t* _buscar_nodo(nodo_t* nodo, const char* clave, abb_comparar_clave_t comparar);
 void _destruir_nodos(nodo_t* nodo, abb_destruir_dato_t destruir);
-void _abb_in_order(nodo_t* nodo, bool visitar(const char *, void *, void *), void *extra);
-void* _abb_borrar(nodo_t* nodo, const char *clave, abb_t *arbol);
+bool _abb_in_order(nodo_t* nodo, bool visitar(const char *, void *, void *), void *extra);
+void* _abb_borrar(nodo_t* nodo, const char *clave, abb_t *arbol, nodo_t** eliminado);
 bool _encolar_in_order(const char* clave, void* dato, void *extra);
 nodo_t* minimo_nodo(nodo_t* nodo);
+void cambiar_clave_dato(nodo_t* nodo, nodo_t* minimo);
 
 abb_t* abb_crear(abb_comparar_clave_t cmp, abb_destruir_dato_t destruir_dato){
     abb_t* abb = malloc(sizeof(abb_t));
@@ -53,11 +53,18 @@ bool abb_guardar(abb_t *arbol, const char *clave, void *dato){
 }
 
 void* abb_borrar(abb_t *arbol, const char *clave){
-    nodo_t* nodo = _abb_borrar(arbol->raiz, clave, arbol);
-    if (nodo == NULL){
+    nodo_t** eliminado = malloc(sizeof(nodo_t*));
+    arbol->raiz = _abb_borrar(arbol->raiz, clave, arbol, eliminado);
+    if (eliminado[0] == NULL){
+        free(eliminado);
         return NULL;
     }
-    return nodo->dato;
+    free(eliminado[0]->clave);
+    void* valor = eliminado[0]->dato;
+    free(eliminado[0]);
+    free(eliminado);
+    arbol->cantidad--;
+    return valor;
 }
 
 void* abb_obtener(const abb_t *arbol, const char *clave){
@@ -76,19 +83,6 @@ bool abb_pertenece(const abb_t *arbol, const char *clave){
 void abb_destruir(abb_t *arbol){
     _destruir_nodos(arbol->raiz, arbol->destruir);
     free(arbol);
-}
-
-void _destruir_nodos(nodo_t* nodo, abb_destruir_dato_t destruir){
-    if (nodo == NULL){
-        return;
-    }
-    if (nodo->der == NULL && nodo->izq == NULL){
-        if (destruir != NULL){
-            destruir(nodo->dato);
-        }
-    }
-    _destruir_nodos(nodo->izq, destruir);
-    _destruir_nodos(nodo->der, destruir);
 }
 
 size_t abb_cantidad(abb_t *arbol){
@@ -135,19 +129,22 @@ void abb_iter_in_destruir(abb_iter_t* iter){
 
 bool _encolar_in_order(const char* clave, void* dato, void *extra){
     cola_t* cola = extra;
-    cola_encolar(cola, clave);
+    cola_encolar(cola, (void*)clave);
     return true;
 }
 
-void _abb_in_order(nodo_t* nodo, bool visitar(const char *, void *, void *), void *extra){
+bool _abb_in_order(nodo_t* nodo, bool visitar(const char *, void *, void *), void *extra){
     if (nodo == NULL){
-        return;
+        return true;
     }
-    _abb_in_order(nodo->izq, visitar, extra);
-    if (!visitar(nodo->clave, nodo->dato, extra)){
-        return;
+    bool avanzar = _abb_in_order(nodo->izq, visitar, extra);
+    if(avanzar && !visitar(nodo->clave, nodo->dato, extra)){
+        return false;
     }
-    _abb_in_order(nodo->der, visitar, extra);
+    if (avanzar){
+        avanzar = _abb_in_order(nodo->der, visitar, extra);
+    }
+    return avanzar;
 }
 
 nodo_t* _abb_guardar(nodo_t* nodo, const char* clave, void* dato, abb_t* arbol){
@@ -172,30 +169,29 @@ nodo_t* _abb_guardar(nodo_t* nodo, const char* clave, void* dato, abb_t* arbol){
     return nodo;
 }
 
-void* _abb_borrar(nodo_t* nodo, const char *clave, abb_t *arbol){
+void* _abb_borrar(nodo_t* nodo, const char *clave, abb_t *arbol, nodo_t** eliminado){
     if (nodo == NULL) {
+        eliminado[0] = NULL;
         return NULL;
     }
     if (arbol->comparar(clave, nodo->clave) < 0){
-        nodo->izq = _abb_borrar(nodo->izq, clave, arbol);
+        nodo->izq =  _abb_borrar(nodo->izq, clave, arbol, eliminado);
     }
     else if (arbol->comparar(clave, nodo->clave) > 0) {
-        nodo->der = _abb_borrar(nodo->der, clave, arbol);
+        nodo->der =  _abb_borrar(nodo->der, clave, arbol, eliminado);
     }
     else {
         if (nodo->izq == NULL) {
-            nodo_t* temp = nodo->der;
-            eliminar_nodo(nodo, arbol);
-            return temp;
+            eliminado[0] = nodo;
+            return nodo->der;
         } else if (nodo->der == NULL) {
-            nodo_t* temp = nodo->izq;
-            eliminar_nodo(nodo, arbol);
-            return temp;
+            eliminado[0] = nodo;
+            return nodo->izq;
         }
         nodo_t* minimo = minimo_nodo(nodo->der);
-        nodo->clave = minimo->clave;
-        nodo->dato = minimo->dato;
-        nodo->der = _abb_borrar(nodo->der, minimo->clave, arbol);
+        cambiar_clave_dato(nodo, minimo);
+        nodo->der = _abb_borrar(nodo->der, minimo->clave, arbol, eliminado);
+        eliminado[0] = minimo;
     }
     return nodo;
 }
@@ -205,34 +201,36 @@ nodo_t* _buscar_nodo(nodo_t* nodo, const char* clave, abb_comparar_clave_t compa
         return NULL;
     }
     if (comparar(clave, nodo->clave) < 0){
-        if (_buscar_nodo(nodo->izq, clave, comparar) == NULL){
-            return NULL;
-        }
+        return _buscar_nodo(nodo->izq, clave, comparar);
     }
     else if (comparar(clave, nodo->clave) > 0){
-        if (_buscar_nodo(nodo->der, clave, comparar) == NULL){
-            return NULL;
-        }
+        return _buscar_nodo(nodo->der, clave, comparar);
     }
     return nodo;
+
 }
 
-nodo_t* crear_nodo(char* clave, void* dato){
+void _destruir_nodos(nodo_t* nodo, abb_destruir_dato_t destruir){
+    if (nodo == NULL){
+        return;
+    }
+    _destruir_nodos(nodo->izq, destruir);
+    _destruir_nodos(nodo->der, destruir);
+    if (destruir != NULL){
+        destruir(nodo->dato);
+    }
+    free(nodo->clave);
+    free(nodo);
+}
+
+nodo_t* crear_nodo(const char* clave, void* dato){
     nodo_t* nuevo_nodo = malloc(sizeof(nodo_t));
     nuevo_nodo->izq = NULL;
     nuevo_nodo->der = NULL;
     nuevo_nodo->dato = dato;
-    nuevo_nodo->clave = malloc(sizeof(char)*strlen(clave));
+    nuevo_nodo->clave = malloc(sizeof(char)*(strlen(clave)+1));
     nuevo_nodo->clave = strcpy(nuevo_nodo->clave, clave);
     return nuevo_nodo;
-}
-
-void eliminar_nodo(nodo_t* nodo, abb_t* arbol){
-    if (arbol->destruir != NULL){
-        arbol->destruir(nodo->dato);
-    }
-    arbol->cantidad--;
-    free(nodo);
 }
 
 nodo_t* minimo_nodo(nodo_t* nodo) {
@@ -240,4 +238,13 @@ nodo_t* minimo_nodo(nodo_t* nodo) {
         return nodo;
     }
     return minimo_nodo(nodo->izq);
+}
+
+void cambiar_clave_dato(nodo_t* nodo, nodo_t* minimo){
+    char* clave = nodo->clave;
+    void* dato = nodo->dato;
+    nodo->clave = minimo->clave;
+    nodo->dato = minimo->dato;
+    minimo->clave = clave;
+    minimo->dato = dato;
 }
